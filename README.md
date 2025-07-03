@@ -13,19 +13,6 @@ O objetivo é simular um sistema bancário simples, permitindo cadastro de usuá
 - Saque com limite diário e por operação
 - Consulta de extrato por conta
 
-### Requisitos
-
-- Python 3.8 ou superior
-
-### Instalação
-
-Clone este repositório e acesse a pasta do projeto:
-
-```bash
-git clone https://github.com/seu-usuario/banco-dio.git
-cd banco-dio
-```
-
 ### Como usar
 
 1. Execute o arquivo `banco.py` em seu terminal Python:
