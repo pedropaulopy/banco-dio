@@ -1,112 +1,224 @@
+from abc import ABC, abstractmethod
+from datetime import datetime, timedelta
+
 # Variáveis globais para controle do sistema bancário
 users = []  # Lista para armazenar usuários cadastrados
 accounts = []  # Lista para armazenar contas criadas
 next_account_number = 1  # Próximo número de conta a ser atribuído
 
-def create_user(name, birthday, cpf, address):
-    # Verifica se o CPF já está cadastrado
-    if cpf in users:
-       return print("CPF ja cadastrado.")
-        
-    user = [(name, birthday, cpf, address)]
-    users.append(user)  # Adiciona novo usuário à lista
-
-def create_account(cpf):
-    global next_account_number
-    # Verifica se o CPF está cadastrado antes de criar a conta
-    if cpf not in users:
-        return print("CPF nao cadastrado.")
-    
-    # Cria conta como dicionário com saldo, extrato e contador de saques
-    account = {
-        "agencia": "0001",
-        "numero": next_account_number,
-        "cpf": cpf,
-        "saldo": 0,
-        "extrato": [],
-        "saques": 0
-    }
-    next_account_number += 1  # Incrementa o número para a próxima conta
-    accounts.append(account)  # Adiciona conta à lista de contas
-
-def find_account():
-    # Solicita número da conta ao usuário e retorna a conta correspondente
+def find_account_obj():
     numero = int(input("Digite o número da conta: "))
     for conta in accounts:
-        if conta["numero"] == numero:
+        if hasattr(conta, "numero") and conta.numero == numero:
             return conta
     print("Conta não encontrada.")
     return None
 
-def deposit():
-    conta = find_account()
-    if not conta:
-        return
-    # Solicita valor de depósito ao usuário
-    amount = float(input("Quanto deseja depositar? R$"))
-    conta["saldo"] += amount  # Atualiza saldo da conta
-    conta["extrato"].append(f"DEPOSITO. +R${amount:.2f}")  # Registra operação
+def find_cliente_by_conta(conta):
+    return getattr(conta, "cliente", None)
 
-def withdraw():
-    conta = find_account()
-    if not conta:
+class Historico:
+    def __init__(self):
+        self.transacoes = []
+
+    def adicionar_transacao(self, transacao):
+        self.transacoes.append({
+            "tipo": type(transacao).__name__,
+            "valor": transacao.valor,
+            "data_hora": transacao.data_hora
+        })
+
+class Cliente:
+    def __init__(self, endereco: str):
+        self.endereco = endereco
+        self.contas = []
+
+    def realizar_transacao(self, conta, transacao):
+        if conta in self.contas:
+            sucesso = transacao.registrar(conta)
+            if sucesso:
+                conta.historico.adicionar_transacao(transacao)
+            return sucesso
+        return False
+
+    def adicionar_conta(self, conta):
+        self.contas.append(conta)
+
+class PessoaFisica(Cliente):
+    def __init__(self, nome: str, cpf: str, data_nascimento: datetime, endereco: str):
+        super().__init__(endereco)
+        self.nome = nome
+        self.cpf = cpf
+        self.data_nascimento = data_nascimento
+
+class Conta:
+    def __init__(self, numero: int, agencia: str, cliente: Cliente):
+        self.numero = numero
+        self.agencia = agencia
+        self.saldo = 0.0
+        self.cliente = cliente
+        self.historico = Historico()
+
+    def saldo_atual(self):
+        return self.saldo
+
+    @classmethod
+    def nova_conta(cls, cliente: Cliente, numero: int):
+        conta = cls(numero=numero, agencia="0001", cliente=cliente)
+        cliente.adicionar_conta(conta)
+        return conta
+
+    def sacar(self, valor: float):
+        if valor > 0 and valor <= self.saldo:
+            self.saldo -= valor
+            return True
+        return False
+
+    def depositar(self, valor: float):
+        if valor > 0:
+            self.saldo += valor
+            return True
+        return False
+
+class ContaCorrente(Conta):
+    def __init__(self, numero: int, agencia: str, cliente: Cliente, limite: float = 500.0, limite_saques: int = 3):
+        super().__init__(numero, agencia, cliente)
+        self.limite = limite
+        self.limite_saques = limite_saques
+        self.saques_realizados = []  # lista de datetimes dos saques
+
+    def sacar(self, valor: float):
+        agora = datetime.now()
+        # Remove saques que não são das últimas 24h
+        self.saques_realizados = [
+            t for t in self.saques_realizados if agora - t < timedelta(hours=24)
+        ]
+        if len(self.saques_realizados) >= self.limite_saques:
+            print("Limite de 3 saques em 24h atingido.")
+            return False
+        if valor > self.limite:
+            print("Valor máximo por saque é R$500.")
+            return False
+        if 0 < valor <= (self.saldo + self.limite):
+            self.saldo -= valor
+            self.saques_realizados.append(agora)
+            return True
+        print("Saldo insuficiente ou valor inválido.")
+        return False
+
+class Transacao(ABC):
+    def __init__(self, valor: float):
+        self.valor = valor
+        self.data_hora = datetime.now()
+
+    @abstractmethod
+    def registrar(self, conta: Conta):
+        pass
+
+class Saque(Transacao):
+    def registrar(self, conta: Conta):
+        if conta.sacar(self.valor):
+            return True
+        print("Saque não realizado. Saldo insuficiente ou limite atingido.")
+        return False
+
+class Deposito(Transacao):
+    def registrar(self, conta: Conta):
+        if conta.depositar(self.valor):
+            return True
+        print("Depósito não realizado. Valor inválido.")
+        return False
+
+def cadastrar_usuario():
+    nome = input("Nome completo: ")
+    cpf = input("CPF: ")
+    data_nascimento = input("Data de nascimento (YYYY-MM-DD): ")
+    endereco = input("Endereço: ")
+    try:
+        data_nascimento = datetime.strptime(data_nascimento, "%Y-%m-%d")
+    except ValueError:
+        print("Data inválida.")
         return
-    # Verifica limite diário de saques
-    if conta["saques"] == 3:
-        print("Voce atingiu seu limite de saques diarios, tente novamente em 24h.")
+    for u in users:
+        if hasattr(u, "cpf") and u.cpf == cpf:
+            print("Usuário já cadastrado.")
+            return
+    usuario = PessoaFisica(nome, cpf, data_nascimento, endereco)
+    users.append(usuario)
+    print("Usuário cadastrado com sucesso.")
+
+def cadastrar_conta():
+    global next_account_number
+    cpf = input("CPF do titular: ")
+    cliente = None
+    for u in users:
+        if hasattr(u, "cpf") and u.cpf == cpf:
+            cliente = u
+            break
+    if not cliente:
+        print("Cliente não encontrado. Cadastre o usuário primeiro.")
         return
-    amount = float(input("Quanto deseja sacar? R$"))
-    # Verifica se o valor do saque está dentro dos limites permitidos
-    if amount <= 500 and amount <= conta["saldo"] and conta["saques"] < 3:
-        conta["saldo"] -= amount  # Atualiza saldo da conta
-        conta["extrato"].append(f"SAQUE. -R${amount:.2f}")  # Registra operação
-        conta["saques"] += 1  # Incrementa contador de saques
-    elif amount > 500:
-        print("Somente saques menores ou iguais a R$500 sao permitidos.")
-    elif amount > conta["saldo"]:
-        print("Seu saque excede o saldo atual.")
+    conta = ContaCorrente.nova_conta(cliente, next_account_number)
+    accounts.append(conta)
+    print(f"Conta criada com sucesso. Número: {conta.numero}")
+    next_account_number += 1
 
 def print_operations():
-    conta = find_account()
+    conta = find_account_obj()
     if not conta:
         return
-    # Exibe todas as operações realizadas na conta
-    for i in conta["extrato"]:
-        print(i)
-    print(f"Seu saldo atual é: R${conta['saldo']:.2f}")
+    for t in conta.historico.transacoes:
+        print(f"{t['data_hora']} - {t['tipo']}: R${t['valor']:.2f}")
+    print(f"Seu saldo atual é: R${conta.saldo:.2f}")
 
 def print_menu():
-    # Exibe o menu principal do sistema bancário
     print("""
 ========== BANCO DIO ==========
-1 - Depósito  
-2 - Saque  
-3 - Extrato  
-5 - Sair
+1 - Cadastrar usuário
+2 - Cadastrar conta
+3 - Depósito
+4 - Saque
+5 - Extrato
+6 - Sair
 ================================
 """)
-    
-# Loop principal do sistema bancário
-while(True):
-    print_menu()  # Exibe o menu
-    
+
+while True:
+    print_menu()
     option = input("Escolha uma operacao: ")
     match option:
         case "1":
-            deposit()  # Realiza depósito
-            continue
-
+            cadastrar_usuario()
         case "2":
-            withdraw()  # Realiza saque
-            continue
-
+            cadastrar_conta()
         case "3":
-            print_operations()  # Exibe extrato de operações
-            continue 
-        
+            conta = find_account_obj()
+            if not conta:
+                continue
+            cliente = find_cliente_by_conta(conta)
+            valor = float(input("Digite o valor do depósito: "))
+            transacao = Deposito(valor)
+            sucesso = cliente.realizar_transacao(conta, transacao)
+            if sucesso:
+                print("Depósito realizado com sucesso.")
+            else:
+                print("Falha ao realizar depósito.")
         case "4":
-            print("Exiting...")  # Sai do sistema
+            conta = find_account_obj()
+            if not conta:
+                continue
+            cliente = find_cliente_by_conta(conta)
+            valor = float(input("Digite o valor do saque: "))
+            transacao = Saque(valor)
+            sucesso = cliente.realizar_transacao(conta, transacao)
+            if sucesso:
+                print("Saque realizado com sucesso.")
+            else:
+                print("Falha ao realizar saque.")
+        case "5":
+            print_operations()
+        case "6":
+            print("Exiting...")
             break
         case _:
-            print("comand not found")
-            continue
+            print("comando não encontrado")
